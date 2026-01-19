@@ -1,0 +1,36 @@
+### Cadastro de usuário
+POST http://localhost:3001/auth/register
+Content-Type: application/json
+
+{
+  "email": "usuario@email.com",
+  "password": "SenhaSegura123"
+}
+
+### Login de usuário
+POST http://localhost:3001/auth/login
+Content-Type: application/json
+
+{
+  "email": "usuario@email.com",
+  "password": "SenhaSegura123"
+}
+
+### Criar paciente
+POST http://localhost:3001/patients
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkYmFmMWJhYy03ZmQxLTQ1NTAtOWM0Zi1jMDU1ZmRiMTA5ZTkiLCJlbWFpbCI6InVzdWFyaW9AZW1haWwuY29tIiwiaWF0IjoxNzU4ODczNzEyLCJleHAiOjE3NTg4NzczMTJ9.kFWJsdkf09ctblWDXLoCZMwJhVVb2gHByT4a4uxLSnc
+
+{
+  "name": "João Silva",
+  "date_of_birth": "1985-02-15",
+  "gender": "M",
+  "height_cm": 180,
+  "weight_kg": 75,
+  "medical_conditions": ["hipertensão"],
+  "medications": ["Losartana"],
+  "heart_rate_min": 60,
+  "heart_rate_max": 100,
+  "spo2_min": 95,
+  "spo2_max": 100
+}
