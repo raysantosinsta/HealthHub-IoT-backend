@@ -1,0 +1,91 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "./generated/client" // ou "./prisma/generated/client", escolha uma pasta boa
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// 1. A EMPRESA (SaaS Client)
+model Company {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique // ex: hospital-santa-luzia
+  createdAt DateTime @default(now())
+
+  users    User[] // Funcionários da empresa (médicos, admin)
+  patients Patient[] // Pacientes cadastrados por esta empresa
+}
+
+// 2. OS USUÁRIOS (Médicos/Enfermeiros)
+model User {
+  id    String @id @default(cuid())
+  email String @unique
+  name  String
+  role  Role   @default(STAFF)
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+}
+
+enum Role {
+  ADMIN
+  STAFF
+}
+
+// 3. O PACIENTE
+model Patient {
+  id        String   @id @default(cuid())
+  name      String
+  birthDate DateTime
+  active    Boolean  @default(true)
+
+  // --- NOVOS CAMPOS: Padrão Clínico Individual ---
+  bpmMin  Int @default(60) // Abaixo disso é bradicardia para este paciente
+  bpmMax  Int @default(100) // Acima disso é taquicardia para este paciente
+  spo2Min Int @default(94) // Abaixo disso é hipóxia para este paciente
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  devices Device[]
+  vitals  VitalSign[]
+}
+
+// 4. O SENSOR (Hardware)
+model Device {
+  id           String @id @default(cuid())
+  serialNumber String @unique
+  type         String // ex: "Pulmão", "Cardíaco"
+
+  patientId String?
+  patient   Patient? @relation(fields: [patientId], references: [id])
+}
+
+// 5. OS SINAIS VITAIS (Dados de Telemetria)
+model VitalSign {
+  id        BigInt    @id @default(autoincrement()) // BigInt para alto volume de dados
+  type      VitalType
+  value     Float
+  unit      String // bpm, mmHg, %, etc.
+  timestamp DateTime  @default(now())
+
+  patientId String
+  patient   Patient @relation(fields: [patientId], references: [id])
+
+  @@index([patientId, timestamp]) // Essencial para performance no Frontend
+}
+
+enum VitalType {
+  HEART_RATE
+  BLOOD_PRESSURE
+  OXYGEN_SATURATION
+  TEMPERATURE
+}

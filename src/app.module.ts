@@ -9,6 +9,7 @@ import { HeartbeatGateway } from './heartbeat.gateway';
 import { PatientsModule } from './patients/patients.module';
 import { TelegramService } from './telegram/telegram.service';
 import { HealthMonitorService } from './health-monitor/health-monitor.service';
+import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { HealthMonitorService } from './health-monitor/health-monitor.service';
     }),
     HttpModule.register({}),
     PatientsModule,
+    PrismaModule,
   ],
   controllers: [AppController],
   providers: [
