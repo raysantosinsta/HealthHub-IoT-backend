@@ -1,34 +1,79 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
-import { PatientsService } from './patients.service';
+import { 
+  Controller, 
+  Get, 
+  Post, 
+  Body, 
+  Patch, 
+  Param, 
+  Delete, 
+  Req, 
+  UseGuards 
+} from '@nestjs/common';
+import { PatientsService, PatientData } from './patients.service';
 import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
+// Importe o seu Guard de JWT aqui (Exemplo padrão abaixo)
+// import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('patients')
+// @UseGuards(JwtAuthGuard) // Recomendo proteger todas as rotas de pacientes
 export class PatientsController {
   constructor(private readonly patientsService: PatientsService) {}
 
   @Post()
-  create(@Body() createPatientDto: CreatePatientDto) {
-    return this.patientsService.create(createPatientDto);
+  create(@Body() createPatientDto: CreatePatientDto, @Req() req: any) {
+    // Extrai o companyId do usuário logado (injetado pelo AuthGuard no req.user)
+    const companyId = req.user?.companyId || 'fallback-id-se-nao-tiver-guard';
+    return this.patientsService.create(createPatientDto, companyId);
   }
 
   @Get()
-  findAll() {
+  findAll(): Promise<PatientData[]> {
     return this.patientsService.findAll();
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.patientsService.findOne(+id);
+  findOne(@Param('id') id: string): Promise<PatientData | null> {
+    return this.patientsService.findOne(id);
   }
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() updatePatientDto: UpdatePatientDto) {
-    return this.patientsService.update(+id, updatePatientDto);
+    return this.patientsService.update(id, updatePatientDto);
   }
 
   @Delete(':id')
   remove(@Param('id') id: string) {
-    return this.patientsService.remove(+id);
+    return this.patientsService.remove(id);
+  }
+
+  /**
+   * NOVA ROTA: Atualiza a atividade atual do paciente
+   * PATCH /patients/:id/activity
+   */
+  @Patch(':id/activity')
+  updateActivity(
+    @Param('id') id: string, 
+    @Body('activityId') activityId: string
+  ) {
+    return this.patientsService.updateActivity(id, activityId);
+  }
+
+  @Get(':id/vitals')
+  findVitals(@Param('id') id: string) {
+    return this.patientsService.findVitals(id);
+  }
+
+  @Get(':id/vitals/:days')
+  findVitalsByDays(@Param('id') id: string, @Param('days') days: string) {
+    return this.patientsService.findVitals(id, parseInt(days, 10));
+  }
+
+  // Se você implementou o método de previsões no service
+  @Get(':id/predictions')
+  findPredictions(@Param('id') id: string) {
+    // Note: Certifique-se que o método findPredictions existe no service
+    // Se não existir, remova ou implemente conforme discutimos anteriormente
+    return (this.patientsService as any).findPredictions(id);
   }
 }

@@ -11,12 +11,19 @@ import { PrismaModule } from './prisma/prisma.module';
 import { TrendAnalysisModule } from './trend-analysis/trend-analysis.module';
 import { TelegramModule } from './telegram/telegram.module';
 
-// Services soltos (que não tem módulo próprio ainda)
-import { HeartbeatGateway } from './heartbeat.gateway';
-import { HealthMonitorService } from './health-monitor/health-monitor.service';
+// Services/Gateways soltos
+import { HeartbeatGateway } from './heartbeat.gateway'; // <--- Ele está importado aqui...
+// import { HealthMonitorService } from './health-monitor/health-monitor.service'; // (Veja observação abaixo)
+
 import { ReportsPdfModule } from './reports-pdf/reports-pdf.module';
 import { ReportsEmailModule } from './reports-email/reports-email.module';
 import { ReportsWeeklyReportModule } from './reports-weekly-report/reports-weekly-report.module';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { AuthModule } from './auth/auth.module';
+import { PredictionModule } from './prediction/prediction.module';
+import { PredictionSchedulerModule } from './prediction-scheduler/prediction-scheduler.module';
+import { HealthMonitorModule } from './health-monitor/health-monitor.module';
+import { AgentModule } from './agent/agent.module';
 
 @Module({
   imports: [
@@ -24,7 +31,7 @@ import { ReportsWeeklyReportModule } from './reports-weekly-report/reports-weekl
     ScheduleModule.forRoot(),
     HttpModule.register({}),
     
-    // Importando os Módulos (Eles já trazem seus serviços)
+    // Seus módulos
     PatientsModule,
     PrismaModule,
     TrendAnalysisModule,
@@ -32,18 +39,18 @@ import { ReportsWeeklyReportModule } from './reports-weekly-report/reports-weekl
     ReportsPdfModule,
     ReportsEmailModule,
     ReportsWeeklyReportModule,
+    DashboardModule,
+    AuthModule,
+    PredictionModule,
+    PredictionSchedulerModule,
+    HealthMonitorModule, 
+    AgentModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
-    HeartbeatGateway,
-    
-    // HealthMonitorService ficou aqui pois parece que você não criou um HealthMonitorModule.
-    // Se criou, mova ele para os imports também.
-    HealthMonitorService, 
-    
-    // REMOVIDO: TelegramService (já vem do TelegramModule)
-    // REMOVIDO: TrendAnalysisService (já vem do TrendAnalysisModule)
+    // 👇 ADICIONE ESTA LINHA AQUI 👇
+    HeartbeatGateway, 
   ],
 })
 export class AppModule {}

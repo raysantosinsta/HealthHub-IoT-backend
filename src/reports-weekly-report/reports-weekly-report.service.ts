@@ -1,8 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ReportsEmailService } from 'src/reports-email/reports-email.service';
-import  { PdfService } from 'src/reports-pdf/reports-pdf.service';
+import { PdfService } from 'src/reports-pdf/reports-pdf.service';
+import { VitalType } from '@prisma/client';
 
 @Injectable()
 export class WeeklyReportService {
@@ -14,65 +15,119 @@ export class WeeklyReportService {
     private emailService: ReportsEmailService,
   ) {}
 
-  // Roda toda Segunda-feira às 08:00 da manhã
-@Cron('0 0 8 * * 1') // ✅ Segunda-feira às 08:00:00
+  @Cron('0 0 8 * * 1')
   async generateAndSendReports() {
     this.logger.log('📅 Iniciando geração de relatórios semanais...');
 
-    const patients = await this.prisma.patient.findMany({ 
-      where: { active: true },
-      include: { company: true } // Para saber quem notificar (admin da empresa?)
-    });
+    try {
+      const patients = await this.prisma.patient.findMany({
+        where: { active: true },
+        include: { company: true },
+      });
 
-    for (const patient of patients) {
-      await this.processPatientReport(patient);
+      for (const patient of patients) {
+        await this.processPatientReport(patient);
+        // Delay para evitar sobrecarga no envio de e-mails
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    } catch (error) {
+      this.logger.error('Erro ao buscar pacientes:', error.message);
     }
   }
 
-  private async processPatientReport(patient: any) {
-    const now = new Date();
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  public async processPatientReport(patient: any, emailOverride?: string) {
+    this.logger.log(`🔍 Processando relatório: ${patient.name}`);
 
-    // 1. Busca dados da última semana
-    const vitals = await this.prisma.vitalSign.findMany({
-      where: {
-        patientId: patient.id,
-        type: 'HEART_RATE',
-        timestamp: { gte: sevenDaysAgo }
+    try {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      // 1. Busca todos os vitais da semana com o padrão de atividade incluído
+      const vitals = await this.prisma.vitalSign.findMany({
+        where: {
+          patientId: patient.id,
+          timestamp: { gte: sevenDaysAgo },
+        },
+        include: { activityPattern: true },
+      });
+
+      if (vitals.length === 0) {
+        this.logger.warn(`⚠️ Sem dados para ${patient.name}.`);
+        return;
       }
-    });
 
-    if (vitals.length === 0) return;
+      // 2. Busca a última predição da IA para extrair o risco e o motivo
+      const lastPrediction = await this.prisma.healthPrediction.findFirst({
+        where: { patientId: patient.id },
+        orderBy: { generatedAt: 'desc' },
+      });
 
-    // 2. Lógica de "Sono" (Dados entre 00h e 06h)
-    const sleepData = vitals.filter(v => {
-      const h = v.timestamp.getHours();
-      return h >= 0 && h < 6;
-    });
-    
-    const avgSleepBpm = sleepData.length > 0 
-      ? sleepData.reduce((acc, v) => acc + v.value, 0) / sleepData.length
-      : 0;
+      // 3. LÓGICA DE CÁLCULO BASEADA NO CONTEXTO
+      const restingVitals = vitals.filter(
+        (v) =>
+          v.type === VitalType.HEART_RATE &&
+          ['repouso', 'dormindo'].includes(v.activityPattern?.slug || ''),
+      );
 
-    // 3. Lógica de "Estresse" (Picos > 100 durante o dia)
-    const stressData = vitals.filter(v => v.value > 100);
-    const maxBpm = vitals.reduce((max, v) => v.value > max ? v.value : max, 0);
+      const activeVitals = vitals.filter(
+        (v) =>
+          v.type === VitalType.HEART_RATE &&
+          !['repouso', 'dormindo'].includes(v.activityPattern?.slug || ''),
+      );
 
-    // 4. Monta objeto de estatísticas
-    const stats = {
-      avgSleepBpm,
-      stressCount: stressData.length,
-      maxBpm,
-      totalReadings: vitals.length
-    };
+      const spo2Vitals = vitals.filter(
+        (v) => v.type === VitalType.OXYGEN_SATURATION,
+      );
 
-    // 5. Gera PDF e Envia
-    const pdfBuffer = await this.pdfService.generateWeeklyReport(patient.name, stats);
-    
-    // Aqui estamos mandando para um e-mail fixo de teste, 
-    // mas você pode usar patient.company.email ou um campo patient.contactEmail
-    const emailDestino = 'highlanderiniesta@gmail.com'; 
-    
-    await this.emailService.sendReportWithAttachment(emailDestino, patient.name, pdfBuffer);
+      // Monta o objeto de stats para o PDF
+      const stats = {
+        avgRestingBpm: this.calcAvg(restingVitals),
+        avgActiveBpm: this.calcAvg(activeVitals),
+        avgSpo2: this.calcAvg(spo2Vitals),
+        criticalAlertsCount: vitals.filter(
+          (v) => v.value === 0 && v.unit === 'FALL_EVENT',
+        ).length, // Exemplo: quedas
+        maxBpm: Math.max(
+          ...vitals
+            .filter((v) => v.type === VitalType.HEART_RATE)
+            .map((v) => v.value),
+          0,
+        ),
+        lastAiReason: lastPrediction?.reason || 'Análise de tendência estável.',
+        riskLevel: lastPrediction?.riskLevel || 'LOW',
+      };
+
+      // 4. Gera PDF
+      const pdfBuffer = await this.pdfService.generateWeeklyReport(
+        patient.name,
+        stats,
+      );
+
+      // 5. Definição de Destinatário (Hierarquia: Override > Empresa > Paciente)
+      const emailDestino =
+        emailOverride ||
+        patient.company?.email ||
+        patient.email ||
+        'seu-email-teste@gmail.com';
+
+      // 6. Envia o e-mail
+      await this.emailService.sendReportWithAttachment(
+        emailDestino,
+        patient.name,
+        pdfBuffer,
+      );
+
+      this.logger.log(`✅ Relatório enviado para ${emailDestino}`);
+    } catch (error) {
+      this.logger.error(
+        `❌ Erro no WeeklyService para ${patient.name}: ${error.message}`,
+      );
+    }
+  }
+
+  private calcAvg(readings: any[]): number {
+    if (readings.length === 0) return 0;
+    const sum = readings.reduce((acc, curr) => acc + curr.value, 0);
+    return sum / readings.length;
   }
 }

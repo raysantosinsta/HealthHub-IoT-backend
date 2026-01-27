@@ -1,35 +1,41 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
-  provider = "prisma-client"
-  output   = "./generated/client" // ou "./prisma/generated/client", escolha uma pasta boa
+  provider   = "prisma-client-js"
+  engineType = "library"
 }
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
+// ==========================
 // 1. A EMPRESA (SaaS Client)
+// ==========================
 model Company {
   id        String   @id @default(cuid())
   name      String
-  slug      String   @unique // ex: hospital-santa-luzia
+  slug      String   @unique
   createdAt DateTime @default(now())
 
-  users    User[] // Funcionários
-  patients Patient[] // Pacientes
+  users    User[]
+  patients Patient[]
 }
 
-// 2. OS USUÁRIOS (Médicos/Enfermeiros)
+// ==========================
+// 2. OS USUÁRIOS (Corpo Clínico/Admin)
+// ==========================
 model User {
-  id    String @id @default(cuid())
-  email String @unique
-  name  String
-  role  Role   @default(STAFF)
+  id       String @id @default(cuid())
+  email    String @unique
+  password String
+  name     String
+  role     Role   @default(STAFF)
 
   companyId String
   company   Company @relation(fields: [companyId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum Role {
@@ -37,47 +43,96 @@ enum Role {
   STAFF
 }
 
+// ==========================
 // 3. O PACIENTE
+// ==========================
 model Patient {
   id        String   @id @default(cuid())
   name      String
+  email     String?
   birthDate DateTime
   active    Boolean  @default(true)
 
-  // --- NOVOS CAMPOS: Padrão Clínico Individual ---
-  bpmMin  Int @default(60) // Abaixo disso = Bradicardia
-  bpmMax  Int @default(100) // Acima disso = Taquicardia
-  spo2Min Int @default(94) // Abaixo disso = Hipóxia
+  // ESTADO ATUAL (O que o usuário selecionou no App)
+  currentActivityId String?
+  currentActivity   ActivityPattern? @relation("CurrentPatientStatus", fields: [currentActivityId], references: [id])
 
   companyId String
-  company   Company @relation(fields: [companyId], references: [id])
+  company   Company  @relation(fields: [companyId], references: [id])
+  createdAt DateTime @default(now())
 
-  devices Device[]
-  vitals  VitalSign[]
+  // Relações
+  devices          Device[]
+  vitals           VitalSign[]
+  predictions      HealthPrediction[]
+  customThresholds PatientActivityThreshold[] // Limites personalizados por atividade
+
+  @@index([companyId, active])
+  @@index([companyId, createdAt])
 }
 
-// 4. O SENSOR (Hardware)
+// ==========================
+// 4. PADRÕES DE ATIVIDADE (A Inteligência)
+// ==========================
+model ActivityPattern {
+  id          String  @id @default(cuid())
+  slug        String  @unique // ex: 'dormindo', 'repouso', 'exercicio-intenso'
+  name        String // Nome amigável para o Frontend
+  description String?
+
+  // Relações
+  patientsInThisStatus Patient[]                  @relation("CurrentPatientStatus")
+  thresholds           PatientActivityThreshold[]
+  vitalsRecorded       VitalSign[]
+}
+
+// Tabela que define: Para o Paciente X, na Atividade Y, os limites são Z.
+model PatientActivityThreshold {
+  id                String @id @default(cuid())
+  patientId         String
+  activityPatternId String
+
+  bpmMin  Int
+  bpmMax  Int
+  spo2Min Int @default(94)
+
+  patient         Patient         @relation(fields: [patientId], references: [id])
+  activityPattern ActivityPattern @relation(fields: [activityPatternId], references: [id])
+
+  @@unique([patientId, activityPatternId])
+}
+
+// ==========================
+// 5. O SENSOR / DISPOSITIVO
+// ==========================
 model Device {
   id           String @id @default(cuid())
   serialNumber String @unique
-  type         String // ex: "Pulmão", "Cardíaco"
+  type         String
 
   patientId String?
   patient   Patient? @relation(fields: [patientId], references: [id])
 }
 
-// 5. OS SINAIS VITAIS (Dados de Telemetria)
+// ==========================
+// 6. SINAIS VITAIS (Onde o MQTT salva)
+// ==========================
 model VitalSign {
   id        BigInt    @id @default(autoincrement())
   type      VitalType
   value     Float
-  unit      String // bpm, %, etc.
+  unit      String
   timestamp DateTime  @default(now())
+
+  // Contexto: O que o paciente estava fazendo quando o sensor enviou esse dado?
+  activityPatternId String?
+  activityPattern   ActivityPattern? @relation(fields: [activityPatternId], references: [id])
 
   patientId String
   patient   Patient @relation(fields: [patientId], references: [id])
 
-  @@index([patientId, timestamp])
+  @@index([patientId, type, timestamp])
+  @@index([timestamp])
 }
 
 enum VitalType {
@@ -85,4 +140,27 @@ enum VitalType {
   BLOOD_PRESSURE
   OXYGEN_SATURATION
   TEMPERATURE
+}
+
+// ==========================
+// 7. IA PREDITIVA / ALERTAS
+// ==========================
+model HealthPrediction {
+  id          String    @id @default(cuid())
+  patientId   String
+  riskLevel   RiskLevel
+  score       Float // 0.0 - 1.0
+  reason      String // Ex: "BPM acima do limite para estado 'Dormindo'"
+  generatedAt DateTime  @default(now())
+
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@index([patientId, generatedAt])
+  @@index([riskLevel])
+}
+
+enum RiskLevel {
+  LOW
+  MODERATE
+  HIGH
 }

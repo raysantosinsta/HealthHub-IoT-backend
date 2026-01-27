@@ -1,128 +1,142 @@
-// Carrega as variáveis de ambiente manualmente para garantir que o DATABASE_URL exista
-import 'dotenv/config'; 
+// prisma/seed.ts
 
-import { Pool } from 'pg';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from './generated/client/client'; // Ajuste se seu caminho for diferente
+import { PrismaClient, Role, VitalType } from '@prisma/client';
+
+const prisma = new PrismaClient();
 
 async function main() {
-  console.log('🌱 Iniciando seed...');
+  console.log('🌱 Iniciando o seed (SEM HASH)...');
 
-  const connectionString = process.env.DATABASE_URL;
+  // 1. LIMPEZA
+  await prisma.healthPrediction.deleteMany();
+  await prisma.vitalSign.deleteMany();
+  await prisma.patientActivityThreshold.deleteMany();
+  await prisma.device.deleteMany();
+  await prisma.patient.deleteMany();
+  await prisma.user.deleteMany();
+  await prisma.activityPattern.deleteMany();
+  await prisma.company.deleteMany();
 
-  if (!connectionString) {
-    throw new Error('❌ DATABASE_URL não encontrada no .env');
-  }
+  console.log('🧹 Banco limpo.');
 
-  // Configura o Adapter
-  const pool = new Pool({ connectionString });
-  const adapter = new PrismaPg(pool);
+  // 2. CRIAR PADRÕES DE ATIVIDADE
+  const activityRest = await prisma.activityPattern.create({
+    data: { name: 'Repouso / Sentado', slug: 'repouso', description: 'Atividade basal.' }
+  });
 
-  // Instancia o Prisma usando o adapter e "as any" para evitar erros de tipagem estrita
-  const prisma = new PrismaClient({ adapter } as any);
+  const activitySleep = await prisma.activityPattern.create({
+    data: { name: 'Dormindo', slug: 'dormindo', description: 'Sono profundo ou leve.' }
+  });
 
-  try {
-    // ==========================================================
-    // 1. CONFIGURAÇÃO BÁSICA (EMPRESA E PACIENTE)
-    // ==========================================================
+  const activityExercise = await prisma.activityPattern.create({
+    data: { name: 'Exercício Físico', slug: 'exercicio', description: 'Atividade intensa.' }
+  });
 
-    // Criar uma Empresa (Hospital/Clínica)
-    const company = await prisma.company.upsert({
-      where: { slug: 'hospital-geral' },
-      update: {},
-      create: {
-        name: 'Hospital Geral',
-        slug: 'hospital-geral',
-      },
-    });
+  // 3. CRIAR EMPRESA
+  const company = await prisma.company.create({
+    data: { name: 'Health Corp Ltda', slug: 'health-corp' },
+  });
 
-    console.log(`🏥 Empresa processada: ${company.name}`);
+  // 4. CRIAR USUÁRIOS (SENHA EM TEXTO PURO)
+  await prisma.user.create({
+    data: {
+      name: 'Dr. House',
+      email: 'doutor@healthcorp.com',
+      password: '123456', // <--- Texto puro aqui
+      role: Role.STAFF,
+      companyId: company.id,
+    },
+  });
 
-    // Criar o Paciente com o ID EXATO que está no código C do Pico W
-    const patient = await prisma.patient.upsert({
-      where: { id: 'SENSOR-PATIENT-001' },
-      update: {
-        // Atualiza limites para facilitar testes
-        bpmMin: 55,  
-        bpmMax: 110, 
-        spo2Min: 92  
-      },
-      create: {
-        id: 'SENSOR-PATIENT-001',
-        name: 'Highlander Santos',
-        birthDate: new Date('1990-01-01'),
-        companyId: company.id,
-        bpmMin: 55,
-        bpmMax: 110,
-        spo2Min: 92
-      },
-    });
+  await prisma.user.create({
+    data: {
+      name: 'Admin Sistema',
+      email: 'admin@healthcorp.com',
+      password: '123456', // <--- Texto puro aqui
+      role: Role.ADMIN,
+      companyId: company.id,
+    },
+  });
 
-    console.log(`✅ Paciente garantido: ${patient.name} (ID: ${patient.id})`);
+  // 5. CRIAR PACIENTE
+  const patient = await prisma.patient.create({
+    data: {
+      name: 'João da Silva',
+      email: 'joao.silva@email.com',
+      birthDate: new Date('1980-05-20'),
+      companyId: company.id,
+      currentActivityId: activityRest.id,
+      active: true,
+    },
+  });
 
-    // ==========================================================
-    // 2. SIMULAÇÃO DE TENDÊNCIA DE QUEDA (SpO2)
-    // ==========================================================
-    console.log('📉 Gerando dados de teste para Tendência de Queda...');
+  console.log(`👤 Paciente criado: ${patient.name}`);
 
-    const now = new Date();
-    const ONE_MINUTE = 60 * 1000;
+  // 6. CRIAR DISPOSITIVO (IMPORTANTE PARA O MQTT)
+  await prisma.device.create({
+    data: {
+      id: 'SENSOR-PATIENT-001', // O ID QUE O SEU ARDUINO/C++ ENVIA
+      serialNumber: 'SN-99887766',
+      type: 'SMART_VITAL_WATCH_V2',
+      patientId: patient.id,
+    },
+  });
 
-    // A. Limpa dados recentes (últimos 5 min) para não misturar com testes anteriores
-    const deleted = await prisma.vitalSign.deleteMany({
-      where: {
-        patientId: 'SENSOR-PATIENT-001',
-        timestamp: {
-          gt: new Date(now.getTime() - 5 * ONE_MINUTE) // Maior que 5 min atrás
-        }
-      }
-    });
-    console.log(`🧹 Limpeza: ${deleted.count} registros recentes removidos.`);
+  console.log('⌚ Dispositivo SENSOR-PATIENT-001 vinculado!');
 
-    // B. Inserir a sequência de queda (99% -> 97% -> 95%)
+  // 7. THRESHOLDS (LIMITES)
+  await prisma.patientActivityThreshold.create({
+    data: {
+      patientId: patient.id,
+      activityPatternId: activitySleep.id,
+      bpmMin: 40, bpmMax: 90, spo2Min: 92,
+    },
+  });
+
+  await prisma.patientActivityThreshold.create({
+    data: {
+      patientId: patient.id,
+      activityPatternId: activityExercise.id,
+      bpmMin: 80, bpmMax: 170, spo2Min: 90,
+    },
+  });
+
+  // 8. DADOS FAKE
+  const now = new Date();
+  for (let i = 0; i < 20; i++) {
+    const time = new Date(now.getTime() - i * 5 * 60000);
     
-    // 3 Minutos atrás: Estava saudável (99%)
     await prisma.vitalSign.create({
       data: {
-        type: 'OXYGEN_SATURATION',
-        value: 99.0,
-        unit: '%',
-        patientId: 'SENSOR-PATIENT-001',
-        timestamp: new Date(now.getTime() - 3 * ONE_MINUTE)
+        patientId: patient.id,
+        type: VitalType.HEART_RATE,
+        value: 70 + Math.random() * 10,
+        unit: 'bpm',
+        timestamp: time,
+        activityPatternId: activityRest.id,
       }
     });
 
-    // 2 Minutos atrás: Caiu um pouco (97%)
     await prisma.vitalSign.create({
       data: {
-        type: 'OXYGEN_SATURATION',
-        value: 97.0,
+        patientId: patient.id,
+        type: VitalType.OXYGEN_SATURATION,
+        value: 96 + Math.random() * 3,
         unit: '%',
-        patientId: 'SENSOR-PATIENT-001',
-        timestamp: new Date(now.getTime() - 2 * ONE_MINUTE)
+        timestamp: time,
+        activityPatternId: activityRest.id,
       }
     });
-
-    // 1 Minuto atrás: Caiu mais (95%)
-    await prisma.vitalSign.create({
-      data: {
-        type: 'OXYGEN_SATURATION',
-        value: 95.0,
-        unit: '%',
-        patientId: 'SENSOR-PATIENT-001',
-        timestamp: new Date(now.getTime() - 1 * ONE_MINUTE)
-      }
-    });
-
-    console.log('🧪 Dados de teste inseridos: 99% (-3m) -> 97% (-2m) -> 95% (-1m)');
-    console.log('🚀 Aguarde o Cron Job rodar para ver o alerta no Telegram!');
-
-  } catch (error) {
-    console.error('❌ Erro durante o seed:', error);
-    process.exit(1);
-  } finally {
-    await prisma.$disconnect();
   }
+
+  console.log('✅ Seed (sem hash) concluído!');
 }
 
-main();
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

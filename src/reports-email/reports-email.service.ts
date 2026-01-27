@@ -1,84 +1,77 @@
-/* eslint-disable prettier/prettier */
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 
 @Injectable()
 export class ReportsEmailService {
   private readonly logger = new Logger(ReportsEmailService.name);
-  
-  // Usando EXATAMENTE a mesma configuração que funciona no seu MailService
-  private transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: Number(process.env.SMTP_PORT) || 587,
-    secure: false,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
+  private transporter: nodemailer.Transporter;
+
+  constructor() {
+    const user = process.env.SMTP_USER;
+    const pass = process.env.SMTP_PASS;
+    const host = process.env.SMTP_HOST;
+
+    this.transporter = nodemailer.createTransport({
+      host: host || 'smtp.gmail.com',
+      port: Number(process.env.SMTP_PORT) || 587,
+      secure: false, 
+      auth: { user, pass },
+      tls: {
+        rejectUnauthorized: false 
+      },
+      // ADICIONADO: Timeout para evitar que a requisição fique "pendurada"
+      connectionTimeout: 10000, // 10 segundos
+    });
+  }
+
+  /**
+   * Verifica se o transporte está pronto na inicialização
+   */
+  async onModuleInit() {
+    try {
+      await this.transporter.verify();
+      this.logger.log('✅ Conexão com servidor de e-mail validada.');
+    } catch (error) {
+      this.logger.error('❌ Falha ao validar configuração de e-mail (SMTP):', error.message);
+    }
+  }
 
   async sendReportWithAttachment(to: string, patientName: string, pdfBuffer: Buffer) {
-    try {
-      this.logger.log(`Tentando enviar e-mail para ${to}...`);
+    this.logger.log(`🚀 Enviando relatório para: [${to}]`);
 
+    if (!to || !to.includes('@')) {
+      this.logger.error(`❌ E-mail inválido: "${to}"`);
+      throw new Error('E-mail de destino inválido');
+    }
+
+    try {
       const info = await this.transporter.sendMail({
-        from: process.env.MAIL_FROM || '"Health Monitor" <noreply@saas.com>',
+        from: process.env.MAIL_FROM || `"Health Monitor" <${process.env.SMTP_USER}>`,
         to: to,
-        subject: `📄 Relatório de Saúde Semanal - ${patientName}`,
-        // HTML Profissional similar ao seu de reset de senha
+        subject: `📄 Relatório de Saúde - ${patientName}`,
         html: `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <style>
-            body { margin: 0; padding: 0; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #F5F7FA; }
-            .container { width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-            .header { background-color: #4A90E2; padding: 20px; text-align: center; color: white; }
-            .content { padding: 30px; color: #333; line-height: 1.6; }
-            .footer { background-color: #f0f2f5; padding: 15px; text-align: center; font-size: 12px; color: #888; }
-          </style>
-        </head>
-        <body>
-          <br>
-          <div class="container">
-            <div class="header">
-               <h1>Relatório Médico</h1>
-            </div>
-            <div class="content">
-              <p>Olá,</p>
-              <p>Segue em anexo o relatório semanal detalhado dos sinais vitais do paciente <strong>${patientName}</strong>.</p>
-              <p>Este relatório contém:</p>
-              <ul>
-                <li>Média de Batimentos Cardíacos</li>
-                <li>Qualidade do Sono</li>
-                <li>Momentos de Estresse</li>
-                <li>Saturação de Oxigênio</li>
-              </ul>
-              <p>Por favor, analise os dados em anexo.</p>
-            </div>
-            <div class="footer">
-              <p>© ${new Date().getFullYear()} Health Monitor SaaS. Monitoramento Inteligente.</p>
-            </div>
+          <div style="font-family: sans-serif; color: #333;">
+            <h2 style="color: #2c3e50;">Relatório de Saúde Gerado</h2>
+            <p>Olá,</p>
+            <p>O relatório de sinais vitais e histórico de <strong>${patientName}</strong> foi gerado com sucesso e está disponível em anexo.</p>
+            <hr style="border: 0; border-top: 1px solid #eee;" />
+            <p style="font-size: 12px; color: #7f8c8d;">Este é um e-mail automático enviado pelo sistema <strong>HealthMonitor</strong>.</p>
           </div>
-          <br>
-        </body>
-        </html>
         `,
         attachments: [
           {
-            filename: `Relatorio_${patientName.replace(/\s/g, '_')}_${Date.now()}.pdf`,
+            filename: `Relatorio_${patientName.replace(/\s/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`,
             content: pdfBuffer,
             contentType: 'application/pdf',
           },
         ],
       });
 
-      this.logger.log(`✅ E-mail enviado com sucesso! MessageID: ${info.messageId}`);
+      this.logger.log(`✅ E-mail enviado com sucesso! MessageId: ${info.messageId}`);
+      return info;
+
     } catch (error) {
-      this.logger.error(`❌ ERRO AO ENVIAR E-MAIL: ${error.message}`, error.stack);
-      // Logar as credenciais mascaradas para debug (sem mostrar a senha real)
-      this.logger.error(`Config usada: User=${process.env.SMTP_USER}, Host=${process.env.SMTP_HOST}`);
+      this.logger.error(`❌ Erro no envio do e-mail: ${error.message}`);
       throw error;
     }
   }

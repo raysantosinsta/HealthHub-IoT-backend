@@ -1,20 +1,18 @@
 import { Module } from '@nestjs/common';
-
-// 1. Importe os Módulos necessários
 import { PrismaModule } from '../prisma/prisma.module'; 
 import { ReportsPdfModule } from '../reports-pdf/reports-pdf.module';
 import { ReportsEmailModule } from '../reports-email/reports-email.module';
 import { WeeklyReportService } from './reports-weekly-report.service';
+import { ReportsController } from './reports-weekly-report.controller';
 
 @Module({
   imports: [
-    // 2. Adicione eles aqui na lista de imports
-    PrismaModule,        // <--- Resolve o erro do PrismaService (index [0])
-    ReportsPdfModule,    // <--- Resolve o erro do PdfService
-    ReportsEmailModule,  // <--- Resolve o erro do ReportsEmailService
+    PrismaModule,       // Acesso ao Banco
+    ReportsPdfModule,   // Acesso ao gerador de PDF
+    ReportsEmailModule, // Acesso ao enviador de Email
   ],
+  controllers: [ReportsController],
   providers: [WeeklyReportService],
-  // Se você precisar usar este serviço em outro lugar (ex: AppModule), adicione exports:
-  exports: [WeeklyReportService] 
+  exports: [WeeklyReportService],
 })
 export class ReportsWeeklyReportModule {}

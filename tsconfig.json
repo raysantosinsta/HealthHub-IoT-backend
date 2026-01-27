@@ -1,5 +1,8 @@
 {
   "compilerOptions": {
+    "paths": {
+      "@prisma/client": ["./src/generated/client"]
+    },
     "module": "commonjs",
     "declaration": true,
     "removeComments": true,
