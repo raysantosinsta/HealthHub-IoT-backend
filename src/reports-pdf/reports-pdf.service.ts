@@ -1,70 +1,164 @@
 import { Injectable } from '@nestjs/common';
-// Manter o require para evitar o erro de construtor do pdfkit
 const PDFDocument = require('pdfkit');
+// const { Table } = require('pdfkit-table'); // Instale: npm install pdfkit-table
 
 @Injectable()
 export class PdfService {
-
-  async generateWeeklyReport(patientName: string, stats: any): Promise<Buffer> {
+  async generateWeeklyReport(
+    patientName: string,
+    stats: any,
+    companyName?: string,
+    reportDate: Date = new Date(),
+  ): Promise<Buffer> {
     return new Promise((resolve) => {
-      const doc = new PDFDocument({ margin: 50 });
-      const buffers: Buffer[] = [];
+      const doc = new PDFDocument({
+        size: 'A4',
+        margin: 50,
+        layout: 'portrait',
+        bufferPages: true,
+      });
 
+      const buffers: Buffer[] = [];
       doc.on('data', buffers.push.bind(buffers));
       doc.on('end', () => resolve(Buffer.concat(buffers)));
 
-      // --- 1. CABEÇALHO PROFISSIONAL ---
-      doc.fontSize(22).fillColor('#2c3e50').text('Relatório de Saúde Digital', { align: 'center' });
-      doc.moveDown(0.5);
-      doc.fontSize(10).fillColor('grey').text('Análise baseada em Padrões de Atividade', { align: 'center' });
-      doc.moveDown();
-      
-      doc.rect(50, doc.y, 500, 40).fill('#f9f9f9');
-      doc.fillColor('#000').fontSize(12).text(`Paciente: ${patientName}`, 60, doc.y - 30);
-      doc.text(`Período: Últimos 7 dias | Emissão: ${new Date().toLocaleDateString('pt-BR')}`, 60, doc.y - 15);
+      // Cores institucionais (ajuste conforme sua marca)
+      const primaryColor = '#0ea5e9';     // Azul ciano moderno
+      const secondaryColor = '#1e293b';   // Cinza escuro elegante
+      const accentColor = '#10b981';      // Verde sucesso
+      const warningColor = '#f59e0b';
+      const dangerColor = '#ef4444';
+      const bgLight = '#f8fafc';
+
+      // Fonte padrão
+      doc.font('Helvetica');
+      doc.fontSize(10);
+
+      // =============================================
+      // CABEÇALHO PREMIUM
+      // =============================================
+      doc.fillColor(secondaryColor).fontSize(24).text('HealthMonitor', 50, 40, { continued: true });
+      doc.fillColor(primaryColor).fontSize(24).text(' Relatório Semanal', { continued: false });
+
+      doc.fontSize(10).fillColor('gray').text(
+        `Emitido em ${reportDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}`,
+        50,
+        70,
+      );
+
+      doc.moveTo(50, 90).lineTo(545, 90).lineWidth(1).strokeColor(primaryColor).stroke();
+
+      // Dados do paciente
+      doc.fontSize(12).fillColor(secondaryColor).text('Paciente:', 50, 110);
+      doc.font('Helvetica-Bold').text(patientName, 120, 110);
+
+      if (companyName) {
+        doc.font('Helvetica').text('Empresa:', 50, 130);
+        doc.font('Helvetica-Bold').text(companyName, 120, 130);
+      }
+
       doc.moveDown(2);
 
-      // --- 2. SEÇÃO: ANÁLISE POR CONTEXTO (NOVO!) ---
-      doc.fillColor('#2c3e50').fontSize(16).text('1. Resumo por Atividade', { underline: true });
-      doc.moveDown(0.5);
-      
-      doc.fontSize(12).fillColor('#000');
-      
-      // Agora usamos as médias vindas do banco filtradas por atividade
-      doc.text(`🌙 Média em Repouso/Sono: ${stats.avgRestingBpm?.toFixed(0) || '--'} BPM`);
-      doc.text(`🚶 Média em Atividade: ${stats.avgActiveBpm?.toFixed(0) || '--'} BPM`);
-      doc.text(`🩸 Saturação Média (SpO2): ${stats.avgSpo2?.toFixed(0) || '--'}%`);
-      doc.moveDown();
+      // =============================================
+      // RESUMO GERAL (CARD)
+      // =============================================
+      doc.rect(45, doc.y, 500, 90).fill(bgLight).strokeColor(primaryColor).lineWidth(1).stroke();
 
-      // --- 3. SEÇÃO: ALERTAS CLÍNICOS ---
-      doc.fontSize(16).text('2. Alertas e Anomalias', { underline: true });
+      doc.fillColor(secondaryColor).fontSize(14).text('Resumo da Semana', 60, doc.y + 15);
       doc.moveDown(0.5);
+
+      doc.fontSize(11).text(`Período: ${new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR')} a ${new Date().toLocaleDateString('pt-BR')}`);
+
+      doc.moveDown(1);
+
+      const riskColor = 
+        stats.riskLevel === 'HIGH' ? dangerColor :
+        stats.riskLevel === 'MODERATE' ? warningColor : accentColor;
+
+      doc.fillColor(riskColor).fontSize(12).text(`Nível de Risco IA: ${stats.riskLevel}`, 60, doc.y, { continued: true });
+      doc.fillColor(secondaryColor).text(`  (${stats.lastAiReason?.substring(0, 80)}...)`);
+
+      doc.moveDown(2);
+
+      // =============================================
+      // MÉTRICAS EM CARDS
+      // =============================================
+      const cardWidth = 150;
+      const cardHeight = 80;
+      const startX = 50;
+      const startY = doc.y;
+
+      // Card 1 - Repouso
+      doc.rect(startX, startY, cardWidth, cardHeight).fill(bgLight).strokeColor(primaryColor).stroke();
+      doc.fillColor(secondaryColor).fontSize(12).text('Repouso / Sono', startX + 10, startY + 15);
+      doc.fontSize(22).fillColor(primaryColor).text(`${stats.avgRestingBpm?.toFixed(0) || '--'} BPM`, startX + 10, startY + 40);
+
+      // Card 2 - Atividade
+      doc.rect(startX + cardWidth + 25, startY, cardWidth, cardHeight).fill(bgLight).strokeColor(primaryColor).stroke();
+      doc.fillColor(secondaryColor).fontSize(12).text('Atividade', startX + cardWidth + 35, startY + 15);
+      doc.fontSize(22).fillColor(primaryColor).text(`${stats.avgActiveBpm?.toFixed(0) || '--'} BPM`, startX + cardWidth + 35, startY + 40);
+
+      // Card 3 - SpO2
+      doc.rect(startX + (cardWidth + 25) * 2, startY, cardWidth, cardHeight).fill(bgLight).strokeColor(primaryColor).stroke();
+      doc.fillColor(secondaryColor).fontSize(12).text('Saturação O₂', startX + (cardWidth + 25) * 2 + 10, startY + 15);
+      doc.fontSize(22).fillColor(primaryColor).text(`${stats.avgSpo2?.toFixed(1) || '--'}%`, startX + (cardWidth + 25) * 2 + 10, startY + 40);
+
+      doc.moveDown(6);
+
+      // =============================================
+      // ALERTAS E EVENTOS
+      // =============================================
+      doc.fillColor(secondaryColor).fontSize(16).text('Alertas Clínicos da Semana');
+      doc.moveDown(0.5);
+      doc.rect(45, doc.y, 500, 60).fill(bgLight).stroke();
 
       if (stats.criticalAlertsCount > 0) {
-        doc.fillColor('#e74c3c').text(`⚠ Foram detectados ${stats.criticalAlertsCount} alertas críticos nesta semana.`);
-        doc.fontSize(10).text('Estes alertas incluem Taquicardia, Bradicardia ou Hipóxia fora dos limites personalizados.');
+        doc.fillColor(dangerColor).fontSize(14).text(`⚠ ${stats.criticalAlertsCount} alertas críticos detectados`, 60, doc.y + 20);
+        doc.fontSize(11).text('Inclui: taquicardia, bradicardia, hipóxia ou quedas.', 60, doc.y + 35);
       } else {
-        doc.fillColor('#27ae60').text('✓ Nenhum alerta crítico disparado no período.');
+        doc.fillColor(accentColor).fontSize(14).text('✓ Nenhum alerta crítico registrado.', 60, doc.y + 20);
       }
-      doc.moveDown(2);
 
-      // --- 4. SEÇÃO: INSIGHTS DA IA ---
-      doc.fillColor('#2c3e50').fontSize(16).text('3. Parecer da Inteligência Artificial', { underline: true });
+      doc.moveDown(4);
+
+      // =============================================
+      // PARECER DA IA
+      // =============================================
+      doc.fillColor(secondaryColor).fontSize(16).text('Parecer da Inteligência Artificial');
       doc.moveDown(0.5);
-      
-      doc.fontSize(12).fillColor('#34495e').italic();
-      doc.text(`" ${stats.lastAiReason || 'Dados insuficientes para análise preditiva no momento.'} "`);
-      doc.moveDown();
-      
-      const riskColor = stats.riskLevel === 'HIGH' ? '#e74c3c' : stats.riskLevel === 'MODERATE' ? '#f39c12' : '#27ae60';
-      doc.fillColor(riskColor).bold().text(`Nível de Risco Estimado: ${stats.riskLevel || 'BAIXO'}`);
-      doc.moveDown(2);
 
-      // --- 5. RODAPÉ ---
-      doc.fillColor('black').fontSize(10).italic(false);
-      doc.moveTo(50, 700).lineTo(550, 700).stroke();
-      doc.text('Este documento é um suporte à decisão clínica e não substitui o diagnóstico médico.', 50, 715, { align: 'center' });
-      doc.fontSize(8).text('Plataforma HealthMonitor SaaS - Tecnologia Assistiva', { align: 'center' });
+      doc.rect(45, doc.y, 500, 100).fill(bgLight).strokeColor(riskColor).lineWidth(2).stroke();
+
+      doc.fillColor(secondaryColor).fontSize(12).text(
+        stats.lastAiReason || 'Nenhum insight gerado. Dados insuficientes para análise preditiva.',
+        60,
+        doc.y + 20,
+        { width: 480, align: 'justify' }
+      );
+
+      doc.moveDown(2);
+      doc.fillColor(riskColor).font('Helvetica-Bold').fontSize(14).text(`Nível de Risco Estimado: ${stats.riskLevel}`, 60, doc.y);
+
+      doc.moveDown(4);
+
+      // =============================================
+      // RODAPÉ PROFISSIONAL
+      // =============================================
+      const pageCount = doc.bufferedPageRange().count;
+      doc.switchToPage(pageCount - 1);
+
+      doc.fontSize(9).fillColor('gray').text(
+        'Este relatório é confidencial e destinado exclusivamente ao paciente e equipe médica responsável.',
+        50,
+        750,
+        { align: 'center' }
+      );
+      doc.text(
+        'HealthMonitor SaaS – Tecnologia Assistiva | www.healthmonitor.com.br',
+        50,
+        765,
+        { align: 'center' }
+      );
 
       doc.end();
     });

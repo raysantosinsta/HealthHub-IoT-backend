@@ -38,13 +38,33 @@ CREATE TABLE "Patient" (
     "email" TEXT,
     "birthDate" TIMESTAMP(3) NOT NULL,
     "active" BOOLEAN NOT NULL DEFAULT true,
-    "bpmMin" INTEGER NOT NULL DEFAULT 60,
-    "bpmMax" INTEGER NOT NULL DEFAULT 100,
-    "spo2Min" INTEGER NOT NULL DEFAULT 94,
+    "currentActivityId" TEXT,
     "companyId" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Patient_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "ActivityPattern" (
+    "id" TEXT NOT NULL,
+    "slug" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+
+    CONSTRAINT "ActivityPattern_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "PatientActivityThreshold" (
+    "id" TEXT NOT NULL,
+    "patientId" TEXT NOT NULL,
+    "activityPatternId" TEXT NOT NULL,
+    "bpmMin" INTEGER NOT NULL,
+    "bpmMax" INTEGER NOT NULL,
+    "spo2Min" INTEGER NOT NULL DEFAULT 94,
+
+    CONSTRAINT "PatientActivityThreshold_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -59,11 +79,12 @@ CREATE TABLE "Device" (
 
 -- CreateTable
 CREATE TABLE "VitalSign" (
-    "id" BIGSERIAL NOT NULL,
+    "id" TEXT NOT NULL,
     "type" "VitalType" NOT NULL,
     "value" DOUBLE PRECISION NOT NULL,
     "unit" TEXT NOT NULL,
     "timestamp" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "activityPatternId" TEXT,
     "patientId" TEXT NOT NULL,
 
     CONSTRAINT "VitalSign_pkey" PRIMARY KEY ("id")
@@ -94,6 +115,12 @@ CREATE INDEX "Patient_companyId_active_idx" ON "Patient"("companyId", "active");
 CREATE INDEX "Patient_companyId_createdAt_idx" ON "Patient"("companyId", "createdAt");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "ActivityPattern_slug_key" ON "ActivityPattern"("slug");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "PatientActivityThreshold_patientId_activityPatternId_key" ON "PatientActivityThreshold"("patientId", "activityPatternId");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "Device_serialNumber_key" ON "Device"("serialNumber");
 
 -- CreateIndex
@@ -112,10 +139,22 @@ CREATE INDEX "HealthPrediction_riskLevel_idx" ON "HealthPrediction"("riskLevel")
 ALTER TABLE "User" ADD CONSTRAINT "User_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "Patient" ADD CONSTRAINT "Patient_currentActivityId_fkey" FOREIGN KEY ("currentActivityId") REFERENCES "ActivityPattern"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "Patient" ADD CONSTRAINT "Patient_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "PatientActivityThreshold" ADD CONSTRAINT "PatientActivityThreshold_patientId_fkey" FOREIGN KEY ("patientId") REFERENCES "Patient"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PatientActivityThreshold" ADD CONSTRAINT "PatientActivityThreshold_activityPatternId_fkey" FOREIGN KEY ("activityPatternId") REFERENCES "ActivityPattern"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "Device" ADD CONSTRAINT "Device_patientId_fkey" FOREIGN KEY ("patientId") REFERENCES "Patient"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "VitalSign" ADD CONSTRAINT "VitalSign_activityPatternId_fkey" FOREIGN KEY ("activityPatternId") REFERENCES "ActivityPattern"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "VitalSign" ADD CONSTRAINT "VitalSign_patientId_fkey" FOREIGN KEY ("patientId") REFERENCES "Patient"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

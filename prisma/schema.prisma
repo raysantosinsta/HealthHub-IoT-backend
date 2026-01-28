@@ -118,13 +118,12 @@ model Device {
 // 6. SINAIS VITAIS (Onde o MQTT salva)
 // ==========================
 model VitalSign {
-  id        BigInt    @id @default(autoincrement())
+  id        String    @id @default(cuid())
   type      VitalType
   value     Float
   unit      String
   timestamp DateTime  @default(now())
 
-  // Contexto: O que o paciente estava fazendo quando o sensor enviou esse dado?
   activityPatternId String?
   activityPattern   ActivityPattern? @relation(fields: [activityPatternId], references: [id])
 

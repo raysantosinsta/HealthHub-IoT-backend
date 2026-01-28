@@ -101,6 +101,8 @@ export class WeeklyReportService {
       const pdfBuffer = await this.pdfService.generateWeeklyReport(
         patient.name,
         stats,
+        patient.company?.name, // ← Passe o nome da empresa
+        new Date(),
       );
 
       // 5. Definição de Destinatário (Hierarquia: Override > Empresa > Paciente)
