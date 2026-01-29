@@ -1,17 +1,19 @@
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Body, 
-  Patch, 
-  Param, 
-  Delete, 
-  Req, 
-  UseGuards 
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  Req,
+  UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
 import { PatientsService, PatientData } from './patients.service';
 import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
+import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 // Importe o seu Guard de JWT aqui (Exemplo padrão abaixo)
 // import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -20,10 +22,25 @@ import { UpdatePatientDto } from './dto/update-patient.dto';
 export class PatientsController {
   constructor(private readonly patientsService: PatientsService) {}
 
+  // 1. Rota Auxiliar: O Frontend chama essa rota PRIMEIRO para desenhar os inputs
+  // GET /patients/activities-patterns
+  @Get('activities-patterns')
+  getPatterns() {
+    return this.patientsService.findAllActivityPatterns();
+  }
+
   @Post()
+  @UseGuards(JwtAuthGuard) // Garante que o req.user seja preenchido pelo Passport/JWT
   create(@Body() createPatientDto: CreatePatientDto, @Req() req: any) {
-    // Extrai o companyId do usuário logado (injetado pelo AuthGuard no req.user)
-    const companyId = req.user?.companyId || 'fallback-id-se-nao-tiver-guard';
+    // Pega o ID da empresa do Admin que está logado
+    const companyId = req.user?.companyId;
+
+    if (!companyId) {
+      throw new BadRequestException(
+        'Não foi possível identificar a empresa do administrador.',
+      );
+    }
+
     return this.patientsService.create(createPatientDto, companyId);
   }
 
@@ -53,8 +70,8 @@ export class PatientsController {
    */
   @Patch(':id/activity')
   updateActivity(
-    @Param('id') id: string, 
-    @Body('activityId') activityId: string
+    @Param('id') id: string,
+    @Body('activityId') activityId: string,
   ) {
     return this.patientsService.updateActivity(id, activityId);
   }

@@ -100,6 +100,7 @@ export class HealthMonitorService {
     };
 
     const activityName = patient.currentActivity?.name || 'Repouso';
+    console.log(activityName, "ACTIVITY NAME")
 
     // Verificação de Batimentos
     if (data.bpm > limits.bpmMax) {

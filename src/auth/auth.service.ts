@@ -1,76 +1,114 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { Role } from '@prisma/client';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
   ) {}
 
+  /**
+   * Valida credenciais procurando em múltiplas tabelas (User e Patient)
+   */
   async validateUser(email: string, password: string): Promise<any> {
     try {
-      console.log('--- [DEBUG LOGIN] INÍCIO ---');
-      console.log(`1. Buscando email: [${email}]`);
+      this.logger.log(`[AUTH] Validando credenciais para: ${email}`);
 
-      // SUBSTITUIÇÃO: findUnique com include ao invés de JOIN
-      const user = await this.prisma.user.findUnique({
+      // 1. Tenta buscar na tabela de Usuários (ADMIN/STAFF)
+      let identity: any = await this.prisma.user.findUnique({
         where: { email },
-        include: {
-          company: true, // Traz os dados da empresa relacionada
-        },
+        include: { company: true },
       });
 
-      if (!user) {
-        console.error('2. [ERRO]: Usuário não encontrado no banco.');
+      // 2. Se não achou no User, tenta buscar na tabela de Pacientes
+      if (!identity) {
+        this.logger.log(`[AUTH] E-mail não encontrado em 'User', buscando em 'Patient'...`);
+        identity = await this.prisma.patient.findUnique({
+          where: { email },
+          include: { company: true },
+        });
+      }
+
+      // 3. Se não achou em nenhuma das tabelas
+      if (!identity) {
+        this.logger.error(`[AUTH] Usuário inexistente: ${email}`);
         throw new UnauthorizedException('Credenciais inválidas');
       }
 
-      console.log('3. Usuário localizado. Verificando senha...');
-
-      // Comparação de texto puro (Limpando espaços extras com trim)
+      // 4. Comparação de senha em TEXTO PURO (Conforme solicitado)
       const inputPassword = String(password).trim();
-      const dbPassword = String(user.password).trim();
-
-      console.log(`4. Comparação: Input["${inputPassword}"] vs Banco["${dbPassword}"]`);
+      const dbPassword = String(identity.password).trim();
 
       if (inputPassword !== dbPassword) {
-        console.error('5. [ERRO]: A senha digitada não confere com a do banco.');
+        this.logger.error(`[AUTH] Senha incorreta para: ${email}`);
         throw new UnauthorizedException('Credenciais inválidas');
       }
 
-      console.log('6. [SUCESSO]: Senha correta.');
-
-      // Remove a senha do objeto de retorno
-      const { password: _, ...userWithoutPassword } = user;
+      // 5. Normalização do objeto de retorno
+      // Remove a senha e garante que o campo 'role' exista (Paciente usa role fixa se não tiver no DB)
+      const { password: _, ...identityWithoutPassword } = identity;
 
       return {
-        ...userWithoutPassword,
-        company: user.company
+        ...identityWithoutPassword,
+        role: identity.role || 'PATIENT', 
+        company: identity.company
           ? {
-              id: user.company.id,
-              name: user.company.name,
-              slug: user.company.slug,
+              id: identity.company.id,
+              name: identity.company.name,
+              slug: identity.company.slug,
             }
           : null,
       };
     } catch (error) {
-      console.error('--- [DEBUG LOGIN] FALHA CRÍTICA ---');
-      console.error(error.message);
+      this.logger.error(`[AUTH ERROR] ${error.message}`);
       throw error;
     }
   }
 
+  /**
+   * Gera o Token JWT contendo informações de contexto e padrões de atividade
+   */
   async login(user: any) {
-    console.log('7. Gerando Token JWT para:', user.email);
+    this.logger.log(`[AUTH] Gerando Token para: ${user.email}`);
+
+    let activities: any[] = [];
+
+    try {
+      // Busca padrões de atividade do banco para o Frontend usar em combos/filtros
+      const dbActivities = await this.prisma.activityPattern.findMany({
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+        },
+      });
+
+      if (dbActivities && dbActivities.length > 0) {
+        activities = dbActivities;
+      } else {
+        // Fallback caso o banco esteja vazio
+        activities = [
+          { id: 'default-1', name: 'Repouso', slug: 'resting' },
+          { id: 'default-2', name: 'Dormindo', slug: 'sleeping' }
+        ];
+      }
+    } catch (error) {
+      this.logger.warn(`Erro ao carregar atividades no login: ${error.message}`);
+    }
+
+    // Payload do Token (O que o frontend vai conseguir ler ao decodificar)
     const payload = {
       sub: user.id,
       email: user.email,
       role: user.role,
-      companyName: user.company.name, // Adicione isso aqui!
-      companyId: user.companyId,
+      companyId: user.companyId || user.company?.id,
+      companyName: user.company?.name,
+      activities: activities, // Importante para o App Mobile do Paciente
     };
 
     return {
@@ -80,12 +118,16 @@ export class AuthService {
         email: user.email,
         name: user.name,
         role: user.role,
-        companyId: user.companyId,
-        companyName: user.company?.name,
+        companyId: payload.companyId,
+        companyName: payload.companyName,
+        activities: activities,
       },
     };
   }
 
+  /**
+   * Registro de novos usuários (Staff/Admin)
+   */
   async register(data: {
     email: string;
     password: string;
@@ -94,9 +136,6 @@ export class AuthService {
     role?: string;
   }) {
     try {
-      console.log('--- [DEBUG REGISTER] ---');
-
-      // 1. Verifica se o email já existe usando Prisma
       const existingUser = await this.prisma.user.findUnique({
         where: { email: data.email },
       });
@@ -105,88 +144,60 @@ export class AuthService {
         throw new UnauthorizedException('Email já cadastrado');
       }
 
-      // IDs manuais (Mantendo sua lógica original)
-      const userId = `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
-      console.log(`Salvando novo usuário com senha em TEXTO PURO: ${data.password}`);
-
-
-      // 2. CONVERTER A STRING PARA O TIPO ENUM CORRETO
-      // Se data.role vier preenchido, forçamos o tipo (as Role).
-      // Se não, usamos o valor padrão do Enum (Role.STAFF).
       const userRole: Role = data.role ? (data.role as Role) : Role.STAFF;
-      // 2. Criação usando create
-      // O Prisma preenche 'createdAt' e 'updatedAt' automaticamente se definidos com @default(now()) no schema,
-      // mas podemos passar explicitamente se preferir.
-      const newUser = await this.prisma.user.create({
+
+      return await this.prisma.user.create({
         data: {
-          id: userId,
           email: data.email,
           password: data.password, // TEXTO PURO
           name: data.name,
           companyId: data.companyId,
           role: userRole,
-          // createdAt: new Date(), // Opcional se seu schema tiver @default(now())
-          // updatedAt: new Date(), // Opcional se seu schema tiver @updatedAt
         },
-        select: { // Equivalente ao RETURNING
+        select: {
           id: true,
           email: true,
           name: true,
           role: true,
-          companyId: true,
         },
       });
-
-      return newUser;
     } catch (error) {
-      console.error('Erro no Registro:', error.message);
       throw new UnauthorizedException('Erro ao registrar: ' + error.message);
     }
   }
 
+  /**
+   * Troca de senha básica
+   */
   async changePassword(userId: string, oldPassword: string, newPassword: string) {
-    try {
-      // 1. Buscar senha atual
-      const user = await this.prisma.user.findUnique({
+    // Busca primeiro em User
+    let user = await this.prisma.user.findUnique({ where: { id: userId } });
+    let isPatient = false;
+
+    // Se não for User, busca em Patient
+    if (!user) {
+      user = await (this.prisma.patient.findUnique({ where: { id: userId } }) as any);
+      isPatient = true;
+    }
+
+    if (!user) throw new UnauthorizedException('Usuário não encontrado');
+
+    if (oldPassword.trim() !== user.password.trim()) {
+      throw new UnauthorizedException('Senha atual incorreta');
+    }
+
+    if (isPatient) {
+      await this.prisma.patient.update({
         where: { id: userId },
+        data: { password: newPassword },
       });
-
-      if (!user) throw new UnauthorizedException('Usuário não encontrado');
-
-      // 2. Comparação texto puro
-      if (oldPassword.trim() !== user.password.trim()) {
-        throw new UnauthorizedException('Senha atual incorreta');
-      }
-
-      // 3. Atualizar senha
+    } else {
       await this.prisma.user.update({
         where: { id: userId },
-        data: { 
-          password: newPassword,
-          // updatedAt: new Date() // O Prisma faz isso sozinho se o campo tiver @updatedAt no schema
-        },
+        data: { password: newPassword },
       });
-
-      return { message: 'Senha alterada com sucesso' };
-    } catch (error) {
-      // Se não for UnauthorizedException, lança erro genérico
-      if (error instanceof UnauthorizedException) throw error;
-      throw new UnauthorizedException('Erro ao alterar senha');
     }
-  }
 
-  async getUsersByCompany(companyId: string) {
-    // 1. Busca simples com select para não retornar a senha
-    const users = await this.prisma.user.findMany({
-      where: { companyId: companyId },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-      },
-    });
-    return users;
+    return { message: 'Senha alterada com sucesso' };
   }
 }

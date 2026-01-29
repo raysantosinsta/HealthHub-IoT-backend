@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { subDays } from 'date-fns'; // Dica: instale date-fns para facilitar datas
 
 @Injectable()
 export class AgentService {
@@ -9,107 +10,107 @@ export class AgentService {
   private model: any;
 
   constructor(private prisma: PrismaService) {
-    // Recomendo usar process.env.GEMINI_API_KEY
-    this.genAI = new GoogleGenerativeAI('AIzaSyBQE_HsqnN6-q9dBRV66zyABmGKiji4uAU');
-    this.model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    this.genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+    this.model = this.genAI.getGenerativeModel({ 
+      model: 'gemini-1.5-flash', // Flash é mais resiliente para análise de dados
+      generationConfig: { responseMimeType: "application/json" }
+    });
   }
 
-  async getClinicalAnalysis(patientId: string) {
+  async getPatientGuidance(patientId: string, onlyContext: boolean = false) {
     try {
-      // 1. Busca profunda baseada no seu novo Schema
+      const sevenDaysAgo = subDays(new Date(), 7);
+
       const patient = await this.prisma.patient.findUnique({
         where: { id: patientId },
         include: {
-          currentActivity: true, // Padrão de atividade atual (ex: Repouso)
-          customThresholds: {
-            include: { activityPattern: true }, // Todos os limites configurados
-          },
-          vitals: {
-            take: 25,
-            orderBy: { timestamp: 'desc' },
-            include: { activityPattern: true }, // Contexto de cada sinal gravado
-          },
-          predictions: {
-            take: 1,
-            orderBy: { generatedAt: 'desc' },
+          currentActivity: true, 
+          customThresholds: true,
+          vitals: { 
+            take: 50, // Pegamos uma amostra maior para média histórica
+            orderBy: { timestamp: 'desc' } 
           },
         },
       });
 
       if (!patient) throw new Error('Paciente não encontrado');
 
-      // Calcular idade
-      const age = new Date().getFullYear() - new Date(patient.birthDate).getFullYear();
+      const lastVital = patient.vitals[0];
+      const historicalVitals = patient.vitals.filter(v => v.timestamp >= sevenDaysAgo);
+      
+      // Cálculo de média simples dos últimos 7 dias
+      const avgBpm7Days = historicalVitals.length > 0 
+        ? Math.round(historicalVitals.reduce((acc, curr) => acc + curr.value, 0) / historicalVitals.length)
+        : null;
 
-      // Identificar o limite específico para a atividade que ele está fazendo AGORA
-      const currentThreshold = patient.customThresholds.find(
-        (t) => t.activityPatternId === patient.currentActivityId
-      );
+      const currentActivity = patient.currentActivity?.name || 'Não informado';
+      const threshold = patient.customThresholds.find(t => t.activityPatternId === patient.currentActivityId);
+      const limitsInfo = threshold ? `BPM ${threshold.bpmMin}-${threshold.bpmMax}` : 'Padrão 60-100';
 
-      // Formatar limites para o prompt
-      const thresholdContext = currentThreshold
-        ? `LIMITES PARA ${patient.currentActivity?.name}: BPM entre ${currentThreshold.bpmMin}-${currentThreshold.bpmMax} e SpO2 mín de ${currentThreshold.spo2Min}%`
-        : `LIMITES: Não há limites específicos para a atividade '${patient.currentActivity?.name || 'Desconhecida'}'. Use padrões clínicos geriátricos.`;
+      const context = {
+        lastVital: lastVital?.value || 0,
+        avgBpm7Days: avgBpm7Days,
+        activity: currentActivity,
+        limits: limitsInfo
+      };
 
-      // Formatar vitais com o contexto da atividade no momento da leitura
-      const vitalsText = patient.vitals
-        .map(v => {
-          const time = new Date(v.timestamp).toLocaleString('pt-BR');
-          return `- ${time}: ${v.type} = ${v.value}${v.unit} (Atividade: ${v.activityPattern?.name || 'N/A'})`;
-        })
-        .join('\n');
+      if (onlyContext) return { context };
 
-      const lastPrediction = patient.predictions[0];
-      const riskContext = lastPrediction 
-        ? `Predição IA de Risco: ${lastPrediction.riskLevel} (Score: ${lastPrediction.score}). Motivo: ${lastPrediction.reason}`
-        : 'Sem predições de risco calculadas.';
-
-      // 2. Prompt com foco no Schema de Atividades
+      // PROMPT HÍBRIDO: Tempo Real + 7 Dias
       const prompt = `
-        ATUE COMO: Especialista em Geriatria e Telemonitoramento.
+        Analise a saúde do paciente:
+        - Agora: ${context.lastVital} BPM (${currentActivity})
+        - Média 7 dias: ${context.avgBpm7Days || 'Sem dados'} BPM
+        - Limites: ${limitsInfo}
         
-        PACIENTE: ${patient.name}
-        IDADE: ${age} anos
-        ESTADO ATUAL NO APP: ${patient.currentActivity?.name || 'Não selecionado'}
-        
-        ${thresholdContext}
-        
-        CONTEXTO DE RISCO:
-        ${riskContext}
-        
-        HISTÓRICO RECENTE (Últimas 25 leituras):
-        ${vitalsText}
-        
-        INSTRUÇÕES DE ANÁLISE:
-        1. Verifique se os vitais são coerentes com a atividade (ex: FC alta enquanto dorme é sinal de alerta).
-        2. Analise tendências de queda na SpO2 (mesmo dentro do limite, quedas graduais importam).
-        3. Como o paciente tem ${age} anos, considere riscos de desidratação, infecção urinária silenciosa (taquicardia súbita) ou dor.
-        
-        RETORNE APENAS JSON:
-        {
-          "status_resumo": "Estável/Atenção/Crítico",
-          "analise_detalhada": "Explicação clínica baseada nos dados e atividade...",
-          "recomendacao_enfermagem": "Ação prática...",
-          "alerta_geriatrico": "Ponto focal para idosos..."
-        }
+        Compare o valor atual com a média histórica dele. 
+        Se o valor atual for muito diferente da média de 7 dias (mesmo dentro do limite), mencione isso.
+        Responda em JSON: { "status": "NORMAL"|"ATENCAO"|"ALERTA", "message": "...", "action": "..." }
       `;
 
-      // 3. Execução
-      const result = await this.model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
-      
-      const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
-      return JSON.parse(cleanJson);
+      try {
+        const result = await this.model.generateContent(prompt);
+        const aiData = JSON.parse(result.response.text().replace(/```json/g, '').replace(/```/g, '').trim());
+        return { ...aiData, context };
+      } catch (aiError) {
+        this.logger.warn("IA falhou, usando análise histórica local.");
+        return this.analyzeLocallyWithHistory(context, threshold);
+      }
 
     } catch (error) {
-      this.logger.error(`Erro na análise IA: ${error.message}`);
+      this.logger.error(`Erro crítico: ${error.message}`);
+      return { status: "ERRO", message: "Sistema indisponível", action: "Checagem manual", context: null };
+    }
+  }
+
+  // Fallback que usa a média de 7 dias se a IA falhar
+  private analyzeLocallyWithHistory(context: any, threshold: any) {
+    const val = context.lastVital;
+    const avg = context.avgBpm7Days;
+    
+    // Se o valor atual está 20% acima da média dele de 7 dias
+    const isAbnormalToHistory = avg && (val > avg * 1.2);
+
+    if (threshold && val > threshold.bpmMax) {
       return {
-        status_resumo: "Erro",
-        analise_detalhada: "Não foi possível processar a análise clínica devido a um erro técnico.",
-        recomendacao_enfermagem: "Verifique o dashboard de vitais manualmente.",
-        alerta_geriatrico: "Erro de conexão com o motor de inteligência."
+        status: "ALERTA",
+        message: `Batimento de ${val} BPM está acima do seu limite e da sua média semanal de ${avg} BPM.`,
+        action: "Repouse imediatamente."
       };
     }
+
+    if (isAbnormalToHistory) {
+      return {
+        status: "ATENCAO",
+        message: `Seus batimentos estão ${val} BPM, o que é consideravelmente maior que sua média semanal (${avg} BPM).`,
+        action: "Verifique se você tomou café ou está sob estresse."
+      };
+    }
+
+    return {
+      status: "NORMAL",
+      message: "Seus sinais estão consistentes com seu histórico da semana.",
+      action: "Continue com suas atividades."
+    };
   }
 }

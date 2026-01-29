@@ -1,12 +1,18 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import { AgentService } from './agent.service';
 
 @Controller('agent')
 export class AgentController {
   constructor(private readonly agentService: AgentService) {}
 
-  @Get('analysis/:patientId')
-  async getAnalysis(@Param('patientId') patientId: string) {
-    return this.agentService.getClinicalAnalysis(patientId);
+  @Get('guidance/:patientId')
+  async getPatientGuidance(
+    @Param('patientId') patientId: string,
+    @Query('onlyContext') onlyContext: string, // Recebe como string da URL
+  ) {
+    return this.agentService.getPatientGuidance(
+      patientId,
+      onlyContext === 'true',
+    );
   }
 }

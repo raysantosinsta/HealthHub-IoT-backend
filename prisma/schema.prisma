@@ -49,9 +49,11 @@ enum Role {
 model Patient {
   id        String   @id @default(cuid())
   name      String
-  email     String?
+  email     String   @unique // Agora é obrigatório e único para login
+  password  String // Campo para a senha hashada
   birthDate DateTime
   active    Boolean  @default(true)
+  role      String   @default("PATIENT") // Identificador de papel para o Auth
 
   // ESTADO ATUAL (O que o usuário selecionou no App)
   currentActivityId String?
@@ -80,13 +82,17 @@ model ActivityPattern {
   name        String // Nome amigável para o Frontend
   description String?
 
+  defaultBpmMin  Int?
+  defaultBpmMax  Int?
+  defaultSpo2Min Int? @default(94)
+
   // Relações
   patientsInThisStatus Patient[]                  @relation("CurrentPatientStatus")
   thresholds           PatientActivityThreshold[]
   vitalsRecorded       VitalSign[]
 }
 
-// Tabela que define: Para o Paciente X, na Atividade Y, os limites são Z.
+// Tabela que define: Para o Paciente X, na Atividade Y, os limites 
 model PatientActivityThreshold {
   id                String @id @default(cuid())
   patientId         String
