@@ -6,6 +6,11 @@ Sistema completo de monitoramento em tempo real voltado para idosos, pacientes c
 
 ---
 
+modelagem dos dados
+
+
+<img width="1536" height="1024" alt="5255f6d0-631d-475f-99d5-92e681c5d45b" src="https://github.com/user-attachments/assets/614da719-69ff-4856-a148-cd5278edb8f1" />
+
 ## ✨ Funcionalidades Principais
 
 * Recebimento de dados em tempo real via **MQTT** (batimentos + quedas)
